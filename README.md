@@ -1,60 +1,20 @@
-# Big Bounty - Security Testing Tool
+# Big Bounty v2 — real-evidence security scanner
 
-Autonomous security testing and vulnerability scanner with three modes: basic, advanced, and custom.
+Live: https://big-bounty.vercel.app
 
-## Features
+Every finding is backed by a live HTTP / DNS / RDAP / NVD request with raw evidence included. No simulated results.
 
-- **Basic Mode**: Non-intrusive scans including SSL check, security headers analysis, and common path discovery
-- **Advanced Mode**: Extended scans with API endpoint discovery
-- **Custom Mode**: Custom instruction-based testing
-- **Real-time Results**: Color-coded severity levels (critical, high, medium, low, info)
-- **Modern UI**: Dark theme with gradient accents
+## Modes
+- **basic** — recon (DoH A/MX/NS/TXT/SPF/DMARC), crt.sh subdomains, RDAP IP network info, soft-404-aware directory busting (60 paths), security headers, CORS origin-reflection probe, tech fingerprinting (100+ signatures), secret-in-HTML scan (Google/Slack/Heroku/AWS keys, JWTs, private keys)
+- **advanced** — everything above + full subdomain brute (100 names), HTTP port check, XSS reflection probes (canary → 8 payloads), SQLi error-based probes (MySQL/Postgres/MSSQL/SQLite/Oracle signatures), open-redirect probes (20 params × 4 payloads), NVD CVE matching (top 25 products)
+- **custom** — advanced + your own paths parsed from the instructions box
 
-## Local Development
-
-```bash
-cd /home/workspace/Projects/big-bounty
-npm install
-npm run dev
+## API
+```
+POST /api/scan   {"target": "https://example.com", "mode": "basic|advanced|custom", "custom": "optional instructions"}
 ```
 
-Visit http://localhost:3000
-
-## Build
-
-```bash
-npm run build
+## Deploy
 ```
-
-## Deployment
-
-### Vercel
-1. Push to GitHub
-2. Import project in Vercel
-3. Deploy
-
-### Cloudflare Workers
-```bash
-cd /home/workspace/Projects/big-bounty
-wrangler deploy
+bash deploy.sh   # vercel CLI, production
 ```
-
-## API Endpoint
-
-POST `/api/scan`
-
-```json
-{
-  "target": "example.com",
-  "mode": "basic",
-  "customInstructions": "optional text for custom mode"
-}
-```
-
-## Security Checks
-
-- SSL/TLS certificate validation
-- Security headers (X-Frame-Options, CSP, HSTS, etc.)
-- Common exposed paths (/admin, /.git, /wp-admin, etc.)
-- API endpoint discovery
-- Information disclosure detection
