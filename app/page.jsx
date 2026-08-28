@@ -17,7 +17,36 @@ export default function Home() {
   const [livePhases, setLivePhases] = useState([]);
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
+  const [downloading, setDownloading] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+
+  async function downloadReport(fmt) {
+    if (!result) return;
+    setDownloading(true);
+    try {
+      const res = await fetch("/api/report?format=" + fmt, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: fmt === "json" ? "application/json" : "*/*" },
+        body: JSON.stringify(result),
+      });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const ext = fmt === "pdf" ? "pdf" : fmt;
+      const mime = fmt === "pdf" ? "application/pdf" : fmt === "md" ? "text/markdown" : fmt === "html" ? "text/html" : "application/json";
+      const blob = fmt === "json" ? new Blob([JSON.stringify(result, null, 2)], { type: mime }) : await res.blob();
+      const host = (result.finalTarget || result.target || "scan").replace(/^https?:\/\//, "").replace(/[^a-z0-9.-]/gi, "");
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "bigbounty-" + host + "-" + new Date().toISOString().slice(0, 10) + "." + ext;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(a.href);
+    } catch (e) {
+      setError("Report download failed: " + (e && e.message ? e.message : String(e)));
+    } finally {
+      setDownloading(false);
+    }
+  }
 
   async function run() {
     if (!target.trim()) { setError("Enter a target URL"); return; }
@@ -170,6 +199,14 @@ export default function Home() {
                   {["critical", "high", "medium", "low", "info"].map((s) => (
                     <span key={s} style={{ color: SEV_COLOR[s] }}>{s}: {result.summary[s] || 0}</span>
                   ))}
+                  <div style={{ display: "flex", gap: 8, width: "100%", marginTop: 4, flexWrap: "wrap" }}>
+                    {[["pdf", "PDF Report"], ["md", "Markdown"], ["html", "HTML"], ["json", "JSON"]].map(([fmt, label]) => (
+                      <button key={fmt} onClick={() => downloadReport(fmt)} disabled={downloading}
+                        style={{ background: "#111a26", color: "#58a6ff", border: "1px solid #1f6feb", borderRadius: 6, padding: "6px 12px", cursor: downloading ? "wait" : "pointer", fontSize: 12 }}>
+                        ⬇ {label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 12 }}>
