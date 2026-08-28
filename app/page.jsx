@@ -28,14 +28,14 @@ export default function BigBounty() {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify({ target: target.trim(), mode, ...(mode === "custom" ? { custom } : {}) }),
-        signal: AbortSignal.timeout(58000),
+        signal: AbortSignal.timeout(280000),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       setResult(data);
       setStatus("done");
     } catch (e) {
-      setError(e.name === "AbortError" ? "Scan timed out (55s limit on serverless). Try basic mode or a faster target." : (e.message || "Scan failed"));
+      setError(e.name === "AbortError" ? "Scan timed out (4.5 min limit). Try basic mode or a faster target." : (e.message || "Scan failed"));
       setStatus("error");
     }
   }
@@ -49,10 +49,11 @@ export default function BigBounty() {
         <header style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 4 }}>
           <span style={{ fontSize: 28 }}>⚔️</span>
           <h1 style={{ fontSize: 24, margin: 0, letterSpacing: 1 }}>BIG BOUNTY</h1>
-          <span style={{ fontSize: 11, background: "#161b22", border: "1px solid #30363d", padding: "2px 8px", borderRadius: 10, color: "#8b949e" }}>v2.0 · real evidence only</span>
+          <span style={{ fontSize: 11, background: "#161b22", border: "1px solid #30363d", padding: "2px 8px", borderRadius: 10, color: "#8b949e" }}>v3.0 · real evidence only</span>
+          <span style={{ fontSize: 11, background: "#161b22", border: "1px solid #1f6feb", padding: "2px 8px", borderRadius: 10, color: "#58a6ff" }}>🌐 browser attacks enabled</span>
         </header>
         <p style={{ color: "#8b949e", fontSize: 13, margin: "0 0 20px" }}>
-          Every finding is backed by a live HTTP / DNS / RDAP request — raw evidence included. Use only on targets you're authorized to test.
+          Every finding is backed by a live HTTP / DNS / RDAP request — raw evidence included. Advanced mode adds real bypass attempts (SQLi login bypass, LFI, SSRF, subdomain takeover) plus an AI-driven remote browser (Browserbase) that hunts for auth bypasses and DOM XSS like a human tester. Use only on targets you're authorized to test.
         </p>
 
         <div style={{ background: "#0d1117", border: "1px solid #30363d", borderRadius: 8, padding: 16 }}>
@@ -88,7 +89,7 @@ export default function BigBounty() {
 
         {status === "scanning" && (
           <div style={{ marginTop: 16, padding: 16, border: "1px solid #30363d", borderRadius: 8, color: "#8b949e", fontSize: 13 }}>
-            <span className="pulse" style={{ color: "#f0883e" }}>●</span> Firing live requests at <b style={{ color: "#e6e6e6" }}>{target}</b> — DNS resolution, path brute force, header &amp; vuln probes. This is real network traffic, hang tight…
+            <span className="pulse" style={{ color: "#f0883e" }}>●</span> Firing live requests at <b style={{ color: "#e6e6e6" }}>{target}</b> — recon, dir brute force, vuln probes{mode !== "basic" && <> + real <b style={{ color: "#f85149" }}>bypass attacks</b> &amp; remote-browser hunt</>}. This is real network traffic — advanced scans take 1–4 min.
           </div>
         )}
 
@@ -132,9 +133,29 @@ export default function BigBounty() {
                 {open[f.id] && (
                   <div style={{ padding: "0 14px 12px", fontSize: 12 }}>
                     {f.desc && <div style={{ color: "#8b949e", marginBottom: 8 }}>{f.desc}</div>}
+                    {f.poc && f.poc.steps && (
+                      <div style={{ marginBottom: 8 }}>
+                        <div style={{ color: "#f0883e", marginBottom: 4, fontWeight: 700 }}>HOW IT WAS BYPASSED (share with your client):</div>
+                        <ol style={{ margin: "0 0 8px 18px", padding: 0, color: "#e6e6e6", lineHeight: 1.7 }}>
+                          {(f.poc.steps || []).map((s, i) => <li key={i}>{s}</li>)}
+                        </ol>
+                        {f.poc.curl && (
+                          <div>
+                            <div style={{ color: "#8b949e", marginBottom: 4 }}>Reproduce with curl:</div>
+                            <pre style={{ background: "#010409", border: "1px solid #21262d", borderRadius: 6, padding: 10, overflowX: "auto", margin: "0 0 8px", color: "#7ee787", fontSize: 11.5, whiteSpace: "pre-wrap" }}>{f.poc.curl}</pre>
+                          </div>
+                        )}
+                      </div>
+                    )}
                     <pre style={{ background: "#010409", border: "1px solid #21262d", borderRadius: 6, padding: 10, overflowX: "auto", margin: 0, color: "#a5d6ff", fontSize: 11.5, lineHeight: 1.5 }}>
                       {typeof f.evidence === 'object' ? JSON.stringify(f.evidence, null, 2) : String(f.evidence)}
                     </pre>
+                    {f.screenshot && (
+                      <details style={{ marginTop: 8 }}>
+                        <summary style={{ color: "#8b949e", cursor: "pointer" }}>📸 Browser proof screenshot</summary>
+                        <img src={`data:image/png;base64,${f.screenshot}`} alt="proof" style={{ maxWidth: "100%", border: "1px solid #30363d", borderRadius: 6, marginTop: 6 }} />
+                      </details>
+                    )}
                   </div>
                 )}
               </div>
