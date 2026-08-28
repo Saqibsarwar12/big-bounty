@@ -2,171 +2,216 @@
 import { useState } from "react";
 
 const MODES = [
-  { id: "basic", label: "Basic", desc: "Recon, dirs, headers, CORS, tech, secrets", accent: "#22c55e" },
-  { id: "advanced", label: "Advanced", desc: "Everything + XSS, SQLi, redirect, ports, subdomain brute, CVEs", accent: "#ef4444" },
-  { id: "custom", label: "Custom", desc: "Advanced + your own paths/instructions", accent: "#a855f7" },
+  { id: "basic", label: "Basic", desc: "Recon, dirs, headers, CORS, tech, secrets — non-intrusive" },
+  { id: "advanced", label: "Advanced", desc: "Everything + XSS, SQLi, redirect, CVEs, real bypass attacks (auth bypass, LFI, SSRF, takeover) with PoC", hot: true },
+  { id: "custom", label: "Custom", desc: "Advanced + your own paths / instructions" },
 ];
 
-const SEV_COLORS = { critical: "#ef4444", high: "#f97316", medium: "#eab308", low: "#3b82f6", info: "#6b7280" };
+const SEV_COLOR = { critical: "#ff2b4e", high: "#ff7a1a", medium: "#eab308", low: "#38bdf8", info: "#8b8b8b" };
 
-export default function BigBounty() {
+export default function Home() {
   const [target, setTarget] = useState("");
   const [mode, setMode] = useState("basic");
-  const [custom, setCustom] = useState("");
-  const [status, setStatus] = useState("idle"); // idle | scanning | done | error
-  const [error, setError] = useState("");
+  const [instructions, setInstructions] = useState("");
+  const [status, setStatus] = useState("idle");
+  const [livePhases, setLivePhases] = useState([]);
   const [result, setResult] = useState(null);
-  const [open, setOpen] = useState({}); // finding id -> bool
+  const [error, setError] = useState("");
+  const [elapsed, setElapsed] = useState(0);
 
   async function run() {
     if (!target.trim()) { setError("Enter a target URL"); return; }
-    if (mode === "custom" && !custom.trim()) { setError("Custom mode needs instructions"); return; }
-    setStatus("scanning"); setError(""); setResult(null); setOpen({});
-    const started = Date.now();
+    if (mode === "custom" && !instructions.trim()) { setError("Custom mode needs instructions"); return; }
+    setStatus("scanning"); setError(""); setResult(null); setLivePhases([]);
+    const t0 = Date.now();
+    const tick = setInterval(() => setElapsed(Math.round((Date.now() - t0) / 1000)), 1000);
     try {
       const res = await fetch("/api/scan", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ target: target.trim(), mode, ...(mode === "custom" ? { custom } : {}) }),
-        signal: AbortSignal.timeout(280000),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target: target.trim(), mode, ...(mode === "custom" ? { instructions } : {}) }),
+        signal: AbortSignal.timeout(290000),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      setResult(data);
-      setStatus("done");
+
+      if (!res.ok || !res.body) {
+        let msg = `HTTP ${res.status}`;
+        try {
+          const txt = await res.text();
+          try {
+            const j = JSON.parse(txt);
+            msg = typeof j.error === "string" ? j.error : (j.error?.message || j.message || txt.slice(0, 160));
+          } catch { msg = txt.slice(0, 160) || `HTTP ${res.status}`; }
+        } catch {}
+        throw new Error(msg);
+      }
+
+      // NDJSON stream: phase events live, final {type:'done'} carries the full result
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      let done = false;
+      while (!done) {
+        const { value, done: rdDone } = await reader.read();
+        if (rdDone) break;
+        buf += dec.decode(value, { stream: true });
+        let idx;
+        while ((idx = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, idx).trim();
+          buf = buf.slice(idx + 1);
+          if (!line) continue;
+          let ev;
+          try { ev = JSON.parse(line); } catch { continue; }
+          if (ev.type === "phase") {
+            setLivePhases((prev) => {
+              const others = prev.filter((p) => p.phase !== ev.phase);
+              return [...others, ev];
+            });
+          } else if (ev.type === "done") {
+            setResult(ev.result); setStatus("done"); done = true;
+          } else if (ev.type === "error") {
+            throw new Error(ev.error);
+          }
+        }
+      }
+      if (!result && !done) setError("Scan stream ended early — try again");
     } catch (e) {
-      setError(e.name === "AbortError" ? "Scan timed out (4.5 min limit). Try basic mode or a faster target." : (e.message || "Scan failed"));
-      setStatus("error");
+      const msg = e && e.name === "AbortError"
+        ? "Scan timed out (server limit ~5 min). Try Basic mode, or a faster target."
+        : (e && e.message ? e.message : "Scan failed — check the target URL and try Basic mode");
+      setError(String(msg)); setStatus("error");
+    } finally {
+      clearInterval(tick);
     }
   }
 
-  const ph = result ? Object.fromEntries(result.phases.map((p) => [p.phase, p])) : {};
-  const bySev = result ? Object.fromEntries(result.findings.reduce((acc, f) => { const m = acc.find((x) => x[0] === f.severity); if (m) m[1]++; else acc.push([f.severity, 1]); return acc; }, [])) : {};
+  const phases = livePhases.length ? livePhases : (result ? result.phases : []);
+  const sevCounts = (list) => {
+    const c = {};
+    for (const f of list || []) c[f.severity] = (c[f.severity] || 0) + 1;
+    return c;
+  };
 
   return (
-    <div style={{ minHeight: "100vh", background: "#0a0e14", color: "#e6e6e6", fontFamily: "ui-monospace, 'Cascadia Code', Menlo, monospace", padding: 24 }}>
-      <div style={{ maxWidth: 980, margin: "0 auto" }}>
-        <header style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 4 }}>
-          <span style={{ fontSize: 28 }}>⚔️</span>
-          <h1 style={{ fontSize: 24, margin: 0, letterSpacing: 1 }}>BIG BOUNTY</h1>
-          <span style={{ fontSize: 11, background: "#161b22", border: "1px solid #30363d", padding: "2px 8px", borderRadius: 10, color: "#8b949e" }}>v3.0 · real evidence only</span>
-          <span style={{ fontSize: 11, background: "#161b22", border: "1px solid #1f6feb", padding: "2px 8px", borderRadius: 10, color: "#58a6ff" }}>🌐 browser attacks enabled</span>
+    <div style={{ minHeight: "100vh", background: "#0a0e14", color: "#d7dce3", fontFamily: "ui-monospace, Menlo, monospace", padding: 24 }}>
+      <div style={{ maxWidth: 860, margin: "0 auto" }}>
+        <header style={{ marginBottom: 28 }}>
+          <h1 style={{ fontSize: 30, margin: 0, color: "#ff2b4e", letterSpacing: 2 }}>⚔ BIG BOUNTY</h1>
+          <p style={{ color: "#7d8590", fontSize: 13, margin: "8px 0 0" }}>
+            Real-evidence security scanner — every finding ships the raw HTTP/DNS evidence + a PoC curl command.
+            Advanced mode fires real bypass attempts (SQLi login bypass, LFI, SSRF, takeover) plus a remote
+            browser that hunts auth bypasses &amp; DOM XSS. Only scan targets you are authorized to test.
+          </p>
         </header>
-        <p style={{ color: "#8b949e", fontSize: 13, margin: "0 0 20px" }}>
-          Every finding is backed by a live HTTP / DNS / RDAP request — raw evidence included. Advanced mode adds real bypass attempts (SQLi login bypass, LFI, SSRF, subdomain takeover) plus an AI-driven remote browser (Browserbase) that hunts for auth bypasses and DOM XSS like a human tester. Use only on targets you're authorized to test.
-        </p>
 
-        <div style={{ background: "#0d1117", border: "1px solid #30363d", borderRadius: 8, padding: 16 }}>
-          <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+        <section style={{ border: "1px solid #1f2733", borderRadius: 10, padding: 18, background: "#0d1219" }}>
+          <label style={{ display: "block", fontSize: 12, color: "#7d8590", marginBottom: 6 }}>TARGET</label>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <input
               value={target} onChange={(e) => setTarget(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && status !== "scanning" && run()}
-              placeholder="https://target.example.com" disabled={status === "scanning"}
-              style={{ flex: 1, background: "#010409", border: "1px solid #30363d", borderRadius: 6, padding: "10px 12px", color: "#e6e6e6", fontSize: 14, outline: "none" }}
+              placeholder="https://client-site.com"
+              style={{ flex: 1, minWidth: 240, background: "#0a0e14", border: "1px solid #2a3441", borderRadius: 8, padding: "10px 12px", color: "#d7dce3", fontSize: 14 }}
             />
             <button onClick={run} disabled={status === "scanning"}
-              style={{ background: status === "scanning" ? "#21262d" : "#238636", border: "1px solid rgba(240,246,252,.1)", borderRadius: 6, padding: "10px 20px", color: "#fff", fontWeight: 700, cursor: status === "scanning" ? "wait" : "pointer", whiteSpace: "nowrap" }}>
-              {status === "scanning" ? "SCANNING…" : "RUN SCAN"}
+              style={{ background: status === "scanning" ? "#1f2733" : "#16a34a", color: "#fff", border: 0, borderRadius: 8, padding: "10px 22px", fontSize: 14, fontWeight: 700, cursor: status === "scanning" ? "wait" : "pointer" }}>
+              {status === "scanning" ? `SCANNING… ${elapsed}s` : "RUN SCAN"}
             </button>
           </div>
 
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
             {MODES.map((m) => (
-              <button key={m.id} onClick={() => setMode(m.id)} disabled={status === "scanning"}
-                style={{ background: mode === m.id ? "#161b22" : "transparent", border: `1px solid ${mode === m.id ? m.accent : "#30363d"}`, borderRadius: 6, padding: "6px 12px", color: mode === m.id ? "#fff" : "#8b949e", cursor: "pointer", fontSize: 13 }}>
-                <b style={{ color: mode === m.id ? m.accent : undefined }}>{m.label}</b> — {m.desc}
+              <button key={m.id} onClick={() => setMode(m.id)}
+                style={{
+                  background: mode === m.id ? (m.hot ? "rgba(255,43,78,.12)" : "rgba(22,163,74,.12)") : "transparent",
+                  border: `1px solid ${mode === m.id ? (m.hot ? "#ff2b4e" : "#16a34a") : "#2a3441"}`,
+                  color: mode === m.id ? (m.hot ? "#ff2b4e" : "#16a34a") : "#7d8590",
+                  borderRadius: 8, padding: "8px 14px", fontSize: 12, cursor: "pointer", textAlign: "left",
+                }}>
+                <b>{m.label}</b> — {m.desc}
               </button>
             ))}
           </div>
 
           {mode === "custom" && (
-            <textarea value={custom} onChange={(e) => setCustom(e.target.value)} disabled={status === "scanning"}
-              placeholder="e.g. check /admin /backup.zip /api/v1/users — plus any custom instructions for the scanner"
-              rows={2}
-              style={{ width: "100%", marginTop: 10, background: "#010409", border: "1px solid #30363d", borderRadius: 6, padding: 10, color: "#e6e6e6", fontSize: 13, fontFamily: "inherit", outline: "none", boxSizing: "border-box" }} />
+            <textarea value={instructions} onChange={(e) => setInstructions(e.target.value)}
+              placeholder={"e.g. focus on /api/v1, test the session cookie, try bypassing the login at /auth/login"}
+              rows={3} style={{ width: "100%", marginTop: 10, background: "#0a0e14", border: "1px solid #2a3441", borderRadius: 8, padding: 10, color: "#d7dce3", fontSize: 13 }} />
           )}
-        </div>
+        </section>
 
-        {status === "scanning" && (
-          <div style={{ marginTop: 16, padding: 16, border: "1px solid #30363d", borderRadius: 8, color: "#8b949e", fontSize: 13 }}>
-            <span className="pulse" style={{ color: "#f0883e" }}>●</span> Firing live requests at <b style={{ color: "#e6e6e6" }}>{target}</b> — recon, dir brute force, vuln probes{mode !== "basic" && <> + real <b style={{ color: "#f85149" }}>bypass attacks</b> &amp; remote-browser hunt</>}. This is real network traffic — advanced scans take 1–4 min.
-          </div>
-        )}
-
-        {status === "error" && (
-          <div style={{ marginTop: 16, padding: 16, border: "1px solid #f85149", borderRadius: 8, color: "#f85149", fontSize: 13 }}>
+        {error && (
+          <div style={{ marginTop: 16, border: "1px solid #ff2b4e", borderRadius: 8, padding: 14, color: "#ff2b4e", fontSize: 13, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
             ✗ {error}
           </div>
         )}
 
-        {result && (
-          <div style={{ marginTop: 16 }}>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
-              <span style={{ fontSize: 13, color: "#8b949e" }}>
-                <b style={{ color: "#e6e6e6" }}>{result.finalTarget}</b> · HTTP {result.httpStatus} · {(result.durationMs / 1000).toFixed(1)}s · {result.findings.length} findings
-              </span>
-              {["critical", "high", "medium", "low", "info"].map((s) => bySev[s] ? (
-                <span key={s} style={{ fontSize: 11, background: "#161b22", border: `1px solid ${SEV_COLORS[s]}`, color: SEV_COLORS[s], padding: "2px 8px", borderRadius: 10 }}>{s}: {bySev[s]}</span>
-              ) : null)}
-            </div>
-
-            <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 12 }}>
-              {result.phases.map((p) => (
-                <span key={p.phase} title={p.status === "ok" ? p.ms + "ms" : (p.error || "")}
-                  style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "#010409", border: `1px solid ${p.status === "ok" ? "#238636" : p.status === "empty" ? "#30363d" : "#f85149"}`, color: p.status === "ok" ? "#3fb950" : p.status === "empty" ? "#484f58" : "#f85149" }}>
-                  {p.phase} {p.status === "ok" ? "✓" : p.status === "empty" ? "·" : "✗"}
-                </span>
-              ))}
-            </div>
-
-            {result.findings.map((f) => (
-              <div key={f.id} style={{ background: "#0d1117", border: "1px solid #30363d", borderLeft: `3px solid ${SEV_COLORS[f.severity]}`, borderRadius: 6, marginBottom: 8, overflow: "hidden" }}>
-                <div onClick={() => setOpen((o) => ({ ...o, [f.id]: !o[f.id] }))} style={{ padding: "10px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                  <div style={{ fontSize: 13 }}>
-                    <b style={{ color: SEV_COLORS[f.severity] }}>{f.severity.toUpperCase()}</b>
-                    <span style={{ color: "#8b949e", margin: "0 6px" }}>[{f.tool}]</span>
-                    {f.title}
-                    <span style={{ color: "#484f58", fontSize: 12, marginLeft: 6 }}>{f.detail}</span>
-                  </div>
-                  <span style={{ color: "#484f58", fontSize: 11, whiteSpace: "nowrap" }}>{open[f.id] ? "▾" : "▸"}</span>
-                </div>
-                {open[f.id] && (
-                  <div style={{ padding: "0 14px 12px", fontSize: 12 }}>
-                    {f.desc && <div style={{ color: "#8b949e", marginBottom: 8 }}>{f.desc}</div>}
-                    {f.poc && f.poc.steps && (
-                      <div style={{ marginBottom: 8 }}>
-                        <div style={{ color: "#f0883e", marginBottom: 4, fontWeight: 700 }}>HOW IT WAS BYPASSED (share with your client):</div>
-                        <ol style={{ margin: "0 0 8px 18px", padding: 0, color: "#e6e6e6", lineHeight: 1.7 }}>
-                          {(f.poc.steps || []).map((s, i) => <li key={i}>{s}</li>)}
-                        </ol>
-                        {f.poc.curl && (
-                          <div>
-                            <div style={{ color: "#8b949e", marginBottom: 4 }}>Reproduce with curl:</div>
-                            <pre style={{ background: "#010409", border: "1px solid #21262d", borderRadius: 6, padding: 10, overflowX: "auto", margin: "0 0 8px", color: "#7ee787", fontSize: 11.5, whiteSpace: "pre-wrap" }}>{f.poc.curl}</pre>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    <pre style={{ background: "#010409", border: "1px solid #21262d", borderRadius: 6, padding: 10, overflowX: "auto", margin: 0, color: "#a5d6ff", fontSize: 11.5, lineHeight: 1.5 }}>
-                      {typeof f.evidence === 'object' ? JSON.stringify(f.evidence, null, 2) : String(f.evidence)}
-                    </pre>
-                    {f.screenshot && (
-                      <details style={{ marginTop: 8 }}>
-                        <summary style={{ color: "#8b949e", cursor: "pointer" }}>📸 Browser proof screenshot</summary>
-                        <img src={`data:image/png;base64,${f.screenshot}`} alt="proof" style={{ maxWidth: "100%", border: "1px solid #30363d", borderRadius: 6, marginTop: 6 }} />
-                      </details>
-                    )}
-                  </div>
-                )}
+        {status === "scanning" && (
+          <div style={{ marginTop: 16, border: "1px solid #1f2733", borderRadius: 8, padding: 14 }}>
+            <div style={{ fontSize: 12, color: "#7d8590", marginBottom: 8 }}>LIVE — phases as they complete ({elapsed}s elapsed)</div>
+            {livePhases.map((p) => (
+              <div key={p.phase} style={{ display: "flex", gap: 10, fontSize: 12, padding: "3px 0", color: p.status === "ok" ? "#16a34a" : p.status === "error" ? "#ff7a1a" : "#7d8590" }}>
+                <span>{p.status === "running" ? "◌" : p.status === "ok" ? "✓" : "✗"}</span>
+                <span style={{ width: 160 }}>{p.phase}</span>
+                <span style={{ color: "#7d8590" }}>{p.status === "ok" ? `${p.ms}ms${p.hits != null ? ` · ${p.hits} hits` : ""}` : p.status === "running" ? "running…" : p.error || p.status}</span>
               </div>
             ))}
           </div>
         )}
+
+        {result && (
+          <section style={{ marginTop: 18 }}>
+            <div style={{ border: "1px solid #1f2733", borderRadius: 10, padding: 16, background: "#0d1219" }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 14, alignItems: "baseline", fontSize: 13 }}>
+                <b style={{ color: "#16a34a" }}>{result.finalTarget}</b>
+                <span style={{ color: "#7d8590" }}>HTTP {result.httpStatus} · {result.durationMs / 1000 | 0}s · mode {result.mode}</span>
+              </div>
+              {result.summary && (
+                <div style={{ display: "flex", gap: 14, marginTop: 10, fontSize: 13 }}>
+                  {["critical", "high", "medium", "low", "info"].map((s) => (
+                    <span key={s} style={{ color: SEV_COLOR[s] }}>{s}: {result.summary[s] || 0}</span>
+                  ))}
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 12 }}>
+                {(result.phases || []).map((p) => (
+                  <span key={p.phase} title={p.status === "ok" ? p.ms + "ms" : (p.error || p.status)}
+                    style={{ fontSize: 11, padding: "3px 8px", borderRadius: 6, border: `1px solid ${p.status === "ok" ? "#16341f" : p.status === "skipped" ? "#2a3441" : "#4a1a12"}`, color: p.status === "ok" ? "#16a34a" : p.status === "skipped" ? "#7d8590" : "#ff7a1a" }}>
+                    {p.phase} {p.status === "ok" ? "✓" : p.status === "skipped" ? "·" : "✗"}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+              {result.findings.length === 0 && <div style={{ color: "#7d8590", fontSize: 13 }}>No findings — target looks clean for the checks run in {result.mode} mode.</div>}
+              {result.findings.map((f) => (
+                <div key={f.id} style={{ border: `1px solid ${SEV_COLOR[f.severity] || "#2a3441"}55`, borderLeft: `3px solid ${SEV_COLOR[f.severity] || "#2a3441"}`, borderRadius: 8, padding: 12, background: "#0d1219" }}>
+                  <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1, color: SEV_COLOR[f.severity], border: `1px solid ${SEV_COLOR[f.severity]}`, padding: "1px 7px", borderRadius: 5 }}>{f.severity.toUpperCase()}</span>
+                    <b style={{ fontSize: 14 }}>{f.title}</b>
+                    <span style={{ fontSize: 11, color: "#7d8590" }}>[{f.tool}]</span>
+                  </div>
+                  {f.desc && <p style={{ fontSize: 12, color: "#9aa4af", margin: "6px 0 0" }}>{f.desc}</p>}
+                  <details style={{ marginTop: 8 }}>
+                    <summary style={{ fontSize: 11, color: "#38bdf8", cursor: "pointer" }}>EVIDENCE / PROOF</summary>
+                    <pre style={{ background: "#0a0e14", border: "1px solid #1f2733", borderRadius: 6, padding: 10, fontSize: 11, overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all", color: "#c9d1d9" }}>
+{typeof f.evidence === "string" ? f.evidence : JSON.stringify(f.evidence, null, 2)}
+                    </pre>
+                  </details>
+                  {f.poc && f.poc.curl && (
+                    <details style={{ marginTop: 6 }} open>
+                      <summary style={{ fontSize: 11, color: "#ff7a1a", cursor: "pointer" }}>REPRODUCE (curl)</summary>
+                      <pre style={{ background: "#0a0e14", border: "1px solid #4a1a12", borderRadius: 6, padding: 10, fontSize: 11, overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all", color: "#ffb46e" }}>{f.poc.curl}</pre>
+                      {f.poc.notes && <div style={{ fontSize: 11, color: "#9aa4af", marginTop: 6 }}>↳ {f.poc.notes}</div>}
+                    </details>
+                  )}
+                  {f.fix && <div style={{ marginTop: 8, fontSize: 12, color: "#9aa4af" }}><b style={{ color: "#16a34a" }}>FIX:</b> {f.fix}</div>}
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
       </div>
-      <style jsx global>{`
-        @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .3 } }
-        .pulse { animation: pulse 1.2s infinite }
-      `}</style>
     </div>
   );
 }
