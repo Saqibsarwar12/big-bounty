@@ -285,6 +285,58 @@ export default function Home() {
               ))}
             </div>
 
+            {!result.ai && result.aiError && (
+              <div className="bb-panel" style={{ marginTop: 16 }}>
+                <b style={{ fontSize: 13, letterSpacing: 1, color: "#7d8590" }}>AI ANALYST — unavailable</b>
+                <p style={{ fontSize: 12, color: "#7d8590", margin: "8px 0 0" }}>Free-tier AI rate limit hit or no key configured. All other findings are unaffected. Try again shortly.</p>
+              </div>
+            )}
+
+            {result.ai && (
+              <div className="bb-panel" style={{ marginTop: 16, borderColor: "#2d4a22" }}>
+                <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap", marginBottom: 10 }}>
+                  <b style={{ fontSize: 13, letterSpacing: 1, color: "#a3e635" }}>AI ANALYST — {result.ai.riskVerdict || "VERDICT"}</b>
+                  <span style={{ fontSize: 10, color: "#7d8590" }}>[{result.ai.aiProvider} · {result.ai.aiModel} · AI-generated]</span>
+                </div>
+                <p style={{ fontSize: 13, color: "#d7dce3", lineHeight: 1.6, margin: "0 0 10px" }}>{result.ai.executiveSummary}</p>
+                {result.ai.riskReason && <p style={{ fontSize: 12, color: "#9aa4af", margin: "0 0 12px" }}><b style={{ color: "#58a6ff" }}>Why:</b> {result.ai.riskReason}</p>}
+                {result.ai.attackNarrative && (
+                  <details style={{ marginBottom: 10 }} open>
+                    <summary style={{ fontSize: 11, color: "#ff7a1a", cursor: "pointer" }}>HOW AN ATTACKER WOULD USE THIS</summary>
+                    <p style={{ fontSize: 12, color: "#d7dce3", lineHeight: 1.6, margin: "8px 0 0", whiteSpace: "pre-wrap" }}>{result.ai.attackNarrative}</p>
+                  </details>
+                )}
+                {Array.isArray(result.ai.remediation) && result.ai.remediation.length > 0 && (
+                  <details style={{ marginBottom: 10 }} open>
+                    <summary style={{ fontSize: 11, color: "#16a34a", cursor: "pointer" }}>PRIORITIZED REMEDIATION PLAN</summary>
+                    <ol style={{ margin: "8px 0 0", paddingLeft: 20, display: "flex", flexDirection: "column", gap: 6 }}>
+                      {result.ai.remediation.map((r, i) => (
+                        <li key={i} style={{ fontSize: 12, color: "#d7dce3", lineHeight: 1.5 }}>
+                          <b>{r.title}</b>{r.howto ? <> — {r.howto}</> : null}
+                        </li>
+                      ))}
+                    </ol>
+                  </details>
+                )}
+                {Array.isArray(result.ai.nextAttacks) && result.ai.nextAttacks.length > 0 && (
+                  <details style={{ marginBottom: 10 }}>
+                    <summary style={{ fontSize: 11, color: "#a78bfa", cursor: "pointer" }}>NEXT ATTACKS TO TRY MANUALLY</summary>
+                    <ul style={{ margin: "8px 0 0", paddingLeft: 20 }}>
+                      {result.ai.nextAttacks.map((a, i) => <li key={i} style={{ fontSize: 12, color: "#d7dce3", lineHeight: 1.5 }}>{a}</li>)}
+                    </ul>
+                  </details>
+                )}
+                {Array.isArray(result.ai.fpSuspects) && result.ai.fpSuspects.length > 0 && (
+                  <details>
+                    <summary style={{ fontSize: 11, color: "#7d8590", cursor: "pointer" }}>POSSIBLE FALSE POSITIVES ({result.ai.fpSuspects.length})</summary>
+                    <ul style={{ margin: "8px 0 0", paddingLeft: 20 }}>
+                      {result.ai.fpSuspects.map((s, i) => <li key={i} style={{ fontSize: 12, color: "#9aa4af", lineHeight: 1.5 }}>{String(s)}</li>)}
+                    </ul>
+                  </details>
+                )}
+              </div>
+            )}
+
             <div className="bb-panel" style={{ marginTop: 16 }}>
               <div style={{ fontSize: 12, color: "#7d8590", marginBottom: 10 }}>DOWNLOAD CLIENT REPORT</div>
               <div className="bb-dl">

@@ -57,7 +57,57 @@ function mdReport(d) {
   L.push(`| INFO | ${s.info || 0} |`);
   L.push('');
   L.push(`**Total findings:** ${(d.findings || []).length} · **Tools used:** ${(d.toolsUsed || []).join(', ')}`);
-  L.push('');
+  const ai = d.ai || null;
+  if (ai && ai.executiveSummary) {
+    L.push(`## AI Analyst Summary (${ai.aiProvider || 'AI'}, AI-generated)`);
+    L.push('');
+    if (ai.riskVerdict) L.push(`**Risk verdict:** ${ai.riskVerdict}${ai.riskReason ? ` — ${ai.riskReason}` : ''}`);
+    L.push('');
+    L.push(ai.executiveSummary);
+    L.push('');
+    if (ai.attackNarrative) { L.push(`### Attack narrative`); L.push(''); L.push(ai.attackNarrative); L.push(''); }
+    if (Array.isArray(ai.remediation) && ai.remediation.length) {
+      L.push(`### Remediation plan`); L.push('');
+      ai.remediation.forEach((r, i) => L.push(`${i + 1}. **${r.title}** — ${r.howto || ''}`));
+      L.push('');
+    }
+    if (Array.isArray(ai.nextAttacks) && ai.nextAttacks.length) {
+      L.push(`### Next manual attacks`); L.push('');
+      ai.nextAttacks.forEach((a) => L.push(`- ${a}`));
+      L.push('');
+    }
+  }
+  if (ai && ai.executiveSummary) {
+    L.push(`## AI Analyst Summary`);
+    L.push('');
+    if (ai.riskVerdict) L.push(`**Risk verdict:** ${ai.riskVerdict}${ai.riskReason ? ' - ' + ai.riskReason : ''}`);
+    L.push('');
+    L.push(ai.executiveSummary);
+    L.push('');
+    if (ai.attackNarrative) { L.push('**How a real attacker would chain this:**'); L.push(''); L.push(ai.attackNarrative); L.push(''); }
+    if (Array.isArray(ai.remediation) && ai.remediation.length) {
+      L.push('**Remediation plan (in order):**');
+      L.push('');
+      ai.remediation.slice(0, 8).forEach((r, i) => L.push(`${i + 1}. **${r.title}** - ${r.howto || ''}`));
+      L.push('');
+    }
+    if (Array.isArray(ai.fpSuspects) && ai.fpSuspects.length) {
+      L.push('**Possible false positives to double-check:**');
+      L.push('');
+      ai.fpSuspects.slice(0, 6).forEach((f) => L.push(`- ${f}`));
+      L.push('');
+    }
+    if (Array.isArray(ai.nextAttacks) && ai.nextAttacks.length) {
+      L.push('**Suggested next manual attacks:**');
+      L.push('');
+      ai.nextAttacks.slice(0, 5).forEach((a) => L.push(`- ${a}`));
+      L.push('');
+    }
+    L.push('_AI-generated analysis (nemotron via ' + (ai.aiProvider || 'AI') + ') - verify before acting._');
+    L.push('');
+    L.push('---');
+    L.push('');
+  }
   L.push(`## Findings`);
   const order = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
   const fs2 = [...(d.findings || [])].sort((a, b) => (order[a.severity] ?? 9) - (order[b.severity] ?? 9));
@@ -97,6 +147,79 @@ export async function POST(request) {
       headers: {
         'Content-Type': 'text/markdown; charset=utf-8',
         'Content-Disposition': `attachment; filename="${fname}.md"`,
+        'Cache-Control': 'no-store',
+      },
+    });
+  }
+
+  if (format === 'html') {
+    const ai = scan.ai || {};
+    const h = (x) => String(x == null ? '' : x).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const order = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
+    const sevColor = { critical: '#dc2626', high: '#ea580c', medium: '#ca8a04', low: '#2563eb', info: '#6b7280' };
+    const frows = [...(scan.findings || [])].sort((a, b) => (order[a.severity] ?? 9) - (order[b.severity] ?? 9)).map((f, i) => `
+  <div class="f">
+    <div class="fh"><span class="sev ${f.severity}">#${i + 1} ${h(String(f.severity).toUpperCase())}</span> <b>${h(f.title)}</b> <span class="tool">[${h(f.tool)}]</span></div>
+    ${f.fix ? `<div class="fix"><b>Fix:</b> ${h(f.fix)}</div>` : ''}
+    ${f.curl ? `<pre class="curl">${h(f.curl)}</pre>` : ''}
+    ${f.evidence ? `<details><summary>Evidence</summary><pre>${h(typeof f.evidence === 'string' ? f.evidence : JSON.stringify(f.evidence, null, 2).slice(0, 1200))}</pre></details>` : ''}
+  </div>`).join('\n');
+    const aiHtml = ai.executiveSummary ? `
+  <section class="ai">
+    <h2>AI Analyst Summary <span class="prov">(${h(ai.aiProvider || 'AI')} · ${h(ai.aiModel || '')})</span></h2>
+    ${ai.riskVerdict ? `<p class="verdict"><b>Risk verdict:</b> ${h(ai.riskVerdict)}${ai.riskReason ? ' - ' + h(ai.riskReason) : ''}</p>` : ''}
+    <p>${h(ai.executiveSummary)}</p>
+    ${ai.attackNarrative ? `<h3>How a real attacker would chain this</h3><p>${h(ai.attackNarrative)}</p>` : ''}
+    ${Array.isArray(ai.remediation) && ai.remediation.length ? `<h3>Remediation plan</h3><ol>${ai.remediation.slice(0, 8).map((r) => `<li><b>${h(r.title)}</b> - ${h(r.howto || '')}</li>`).join('')}</ol>` : ''}
+    ${Array.isArray(ai.fpSuspects) && ai.fpSuspects.length ? `<h3>Possible false positives</h3><ul>${ai.fpSuspects.slice(0, 6).map((x) => `<li>${h(x)}</li>`).join('')}</ul>` : ''}
+    ${Array.isArray(ai.nextAttacks) && ai.nextAttacks.length ? `<h3>Next manual attacks</h3><ul>${ai.nextAttacks.slice(0, 5).map((a) => `<li>${h(a)}</li>`).join('')}</ul>` : ''}
+    <p class="note">AI-generated analysis - verify before acting.</p>
+  </section>` : '';
+    const html = `<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Big Bounty Report - ${h(host)}</title>
+<style>
+body{font-family:system-ui,-apple-system,sans-serif;max-width:860px;margin:0 auto;padding:20px;color:#1a1a2e;line-height:1.55;background:#fafafa}
+header{background:#0b1020;color:#fff;padding:24px;border-radius:12px;margin-bottom:18px}
+header h1{margin:0 0 4px;font-size:22px}
+header p{margin:2px 0;color:#9fb0d0;font-size:13px}
+.f{background:#fff;border:1px solid #e4e7ec;border-radius:10px;padding:14px;margin:10px 0;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.fh{display:flex;gap:8px;flex-wrap:wrap;align-items:baseline}
+.sev{font-weight:800;font-size:11px;padding:2px 8px;border-radius:5px;color:#fff}
+.sev.critical{background:#dc2626}.sev.high{background:#ea580c}.sev.medium{background:#ca8a04}.sev.low{background:#2563eb}.sev.info{background:#6b7280}
+.tool{color:#6b7280;font-size:12px}
+.fix{margin-top:8px;font-size:13px;color:#166534}
+pre{background:#0f172a;color:#d7dce3;padding:10px;border-radius:8px;font-size:12px;overflow-x:auto}
+.fix{font-size:13px;color:#475569}
+details{margin-top:8px}summary{cursor:pointer;color:#2563eb;font-size:12px}
+.ai{background:#f4f7ff;border:1px solid #dbe6ff;border-radius:12px;padding:16px;margin:14px 0}
+.ai h2{margin-top:0}.prov{font-size:12px;color:#6b7280;font-weight:400}
+.verdict{font-size:15px}.note{font-size:11px;color:#6b7280}
+table{border-collapse:collapse}td,th{border:1px solid #d5d9e0;padding:6px 14px;font-size:13px}
+footer{color:#6b7280;font-size:11px;margin-top:24px;border-top:1px solid #e4e7ec;padding-top:10px}
+</style></head>
+<body>
+<header><h1>BIG BOUNTY - Security Assessment</h1>
+<p><b>Target:</b> ${h(scan.target)}${scan.finalTarget && scan.finalTarget !== scan.target ? ` (resolved: ${h(scan.finalTarget)})` : ''}</p>
+<p><b>Mode:</b> ${h(String(scan.scanMode || 'basic').toUpperCase())} &nbsp; <b>HTTP:</b> ${h(scan.httpStatus ?? 'n/a')} &nbsp; <b>Date:</b> ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC</p>
+</header>
+${aiHtml}
+<section><h2>Findings by severity</h2>
+<table><tr><th>Severity</th><th>Count</th></tr>
+<tr><td>Critical</td><td>${(scan.summary || {}).critical || 0}</td></tr>
+<tr><td>High</td><td>${(scan.summary || {}).high || 0}</td></tr>
+<tr><td>Medium</td><td>${(scan.summary || {}).medium || 0}</td></tr>
+<tr><td>Low</td><td>${(scan.summary || {}).low || 0}</td></tr>
+<tr><td>Info</td><td>${(scan.summary || {}).info || 0}</td></tr></table>
+<p><b>Total:</b> ${(scan.findings || []).length} findings</p></section>
+<section><h2>Findings (${(scan.findings || []).length})</h2>
+${frows || '<p>No findings recorded for this scan.</p>'}</section>
+<footer>Generated by Big Bounty (big-bounty.vercel.app). Findings are observations from automated testing - verify each one before acting. Only test targets you are authorized to test.</footer>
+</body></html>`;
+    return new NextResponse(html, {
+      headers: {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Content-Disposition': `attachment; filename="${fname}.html"`,
         'Cache-Control': 'no-store',
       },
     });
@@ -166,6 +289,24 @@ export async function POST(request) {
     y -= 17;
   }
   y -= 6;
+
+  const ai = scan.ai || null;
+  if (ai && ai.executiveSummary) {
+    heading(`AI Analyst Summary (${ai.aiProvider || 'AI'})`, 14);
+    if (ai.riskVerdict) text(`Risk verdict: ${ai.riskVerdict}${ai.riskReason ? ' - ' + ai.riskReason : ''}`, { f: 'bold', size: 10 });
+    text(ai.executiveSummary, { size: 9.5 });
+    if (ai.attackNarrative) { y -= 4; text('Attack narrative:', { f: 'bold', size: 9.5 }); text(ai.attackNarrative, { size: 9 }); }
+    if (Array.isArray(ai.remediation) && ai.remediation.length) {
+      y -= 4; text('Remediation plan:', { f: 'bold', size: 9.5 });
+      ai.remediation.slice(0, 8).forEach((r, i) => text(`${i + 1}. ${r.title} - ${r.howto || ''}`, { size: 9, x: M + 10 }));
+    }
+    if (Array.isArray(ai.nextAttacks) && ai.nextAttacks.length) {
+      y -= 4; text('Next manual attacks:', { f: 'bold', size: 9.5 });
+      ai.nextAttacks.slice(0, 5).forEach((a) => text('- ' + a, { size: 9, x: M + 10 }));
+    }
+    text('(AI-generated analysis - verify before acting.)', { size: 7.5, color: rgb(0.45, 0.45, 0.52) });
+    y -= 6;
+  }
 
   heading(`Findings (${findings.length})`, 14);
   if (!findings.length) text('No findings recorded for this scan.', { size: 10 });
