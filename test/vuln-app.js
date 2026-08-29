@@ -107,6 +107,32 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // SSTI: renders q through a fake template engine ({{expr}} evaluated)
+  if (u.pathname === '/render') {
+    let tpl = u.searchParams.get('q') || '';
+    try { tpl = String(tpl).replace(/\{\{\s*([0-9+*\-() ]+)\s*\}\}/g, (_, e) => String(eval(e))); } catch {}
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end('<html><body>Rendered: ' + tpl + '</body></html>');
+    return;
+  }
+
+  // RCE: command injection in a "diagnostics" param
+  if (u.pathname === '/diag' && u.searchParams.has('host')) {
+    const { exec } = require('child_process');
+    const h = String(u.searchParams.get('host'));
+    if (/^[a-zA-Z0-9.\-]+$/.test(h)) {
+      exec('ping -c 1 -W 1 ' + h, { timeout: 4000 }, (err, so, se) => {
+        res.writeHead(200); res.end('PING OUTPUT:\n' + ((so || '') + (se || '')).slice(0, 400));
+      });
+      return;
+    }
+    // vulnerable branch: no shell metacharacter filtering
+    exec('ping -c 1 -W 1 ' + h, { timeout: 4000, shell: '/bin/bash' }, (err, so, se) => {
+      res.writeHead(200); res.end('PING OUTPUT:\n' + ((so || '') + (se || '')).slice(0, 400));
+    });
+    return;
+  }
+
   res.writeHead(404);
   res.end('404');
 });

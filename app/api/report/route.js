@@ -11,10 +11,13 @@ const SEV_COLORS = {
   info: rgb(0.45, 0.45, 0.45),
 };
 
-function esc(s) {
-  return String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
+const WIN = { "\u2192": "->", "\u2190": "<-", "\u2713": "OK", "\u2717": "X", "\u2022": "-", "\u00b7": "-", "\u2014": "--", "\u2013": "-", "\u2018": "\x27", "\u2019": "\x27", "\u201c": "\x22", "\u201d": "\x22", "\u2026": "...", "\u00a0": " ", "\u21b3": "|-", "\u2b07": "", "\u2705": "OK", "\u274c": "X" };
+function clean(s) {
+  return String(s == null ? "" : s).replace(/[\u2190-\u21FF\u2713-\u27BF\u2B00-\u2BFF\u2600-\u26FF\u2700-\u27BF\uFE0F\u200D]/g, (c) => WIN[c] || "").replace(/[\u2018\u2019]/g, "\x27").replace(/[\u201C\u201D]/g, "\x22").replace(/[\u2013\u2014]/g, "-").replace(/\u2026/g, "...").replace(/\u00b7/g, "-").replace(/[^\x20-\x7E\n]/g, (c) => (c.codePointAt(0) < 256 ? c : "?"));
 }
-
+function esc(s) {
+  return clean(s).replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
+}
 // crude line wrap for Helvetica 10pt (~5.4px per char at this width)
 function wrap(text, max = 92) {
   const out = [];
@@ -113,8 +116,9 @@ export async function POST(request) {
   const newPage = () => { page = pdf.addPage([W, H]); y = H - M; };
   const need = (n) => { if (y - n < M + 30) newPage(); };
 
-  function text(str, { font = ink ? undefined : undefined, f = 'reg', size = 9.5, color = ink, x = M, max = W - 2 * M, gap = 4 } = {}) {
+  function text(str, { f = 'reg', size = 9.5, color = ink, x = M, max = W - 2 * M, gap = 4 } = {}) {
     const useFont = f === 'bold' ? bold : f === 'mono' ? mono : font;
+    str = clean(str);
     for (const line of wrap(str, Math.floor(max / (size * 0.56)))) {
       need(size + gap);
       page.drawText(line, { x, y, size, font: useFont, color });
@@ -171,8 +175,8 @@ export async function POST(request) {
     y -= 6;
     const col = SEV_COLORS[String(f.severity).toLowerCase()] || SEV_COLORS.info;
     page.drawRectangle({ x: M, y: y - 4, width: 4, height: 16, color: col });
-    page.drawText(`#${i + 1}  ${String(f.severity).toUpperCase()}`, { x: M + 10, y, size: 10, font: bold, color: col });
-    page.drawText(`[${f.tool}]`, { x: M + 80, y, size: 8.5, color: rgb(0.4, 0.4, 0.48) });
+    page.drawText(`#${i + 1}  ${clean(String(f.severity).toUpperCase())}`, { x: M + 10, y, size: 10, font: bold, color: col });
+    page.drawText(`[${clean(f.tool)}]`, { x: M + 80, y, size: 8.5, color: rgb(0.4, 0.4, 0.48) });
     y -= 14;
     text(f.title, { f: 'bold', size: 10 });
     if (f.evidence) {
@@ -191,8 +195,8 @@ export async function POST(request) {
   // Footer on every page
   const pages = pdf.getPages();
   pages.forEach((pg, idx) => {
-    pg.drawText(`Big Bounty · automated security assessment · page ${idx + 1}/${pages.length}`, { x: M, y: 30, size: 7.5, color: rgb(0.55, 0.55, 0.6) });
-    pg.drawText('Findings are observations — verify before acting. Test only authorized targets.', { x: W - M - 250, y: 30, size: 7.5, color: rgb(0.55, 0.55, 0.6) });
+    pg.drawText(`Big Bounty - automated security assessment - page ${idx + 1}/${pages.length}`, { x: M, y: 30, size: 7.5, color: rgb(0.55, 0.55, 0.6) });
+    pg.drawText('Findings are observations - verify before acting. Test only authorized targets.', { x: W - M - 250, y: 30, size: 7.5, color: rgb(0.55, 0.55, 0.6) });
   });
 
   const bytes = await pdf.save();
